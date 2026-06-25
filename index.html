@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Museum Scene</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: sans-serif;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="instructions">
+        <strong>Controls:</strong><br>
+        - <b>W, A, S, D</b> to move.<br>
+        - <b>Click & Drag</b> to look around.
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- 1. Scene Setup ---
+        const scene = new THREE.Scene();
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.6, 5); // Average eye height
+        camera.rotation.order = 'YXZ'; // Important for proper FPS rotation
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+        document.body.appendChild(renderer.domElement);
+
+        // --- 2. The Room (Cube with 6 bright walls) ---
+        const roomSize = 20;
+        const roomGeometry = new THREE.BoxGeometry(roomSize, roomSize, roomSize);
+        const roomMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, 
+            side: THREE.BackSide, // Render inside of the cube
+            roughness: 0.8
+        });
+        const room = new THREE.Mesh(roomGeometry, roomMaterial);
+        room.position.y = roomSize / 2; // Floor at y=0
+        room.receiveShadow = true;
+        scene.add(room);
+
+        // --- 3. Lighting (4 Point Lights from ceiling corners) ---
+        const lightOffset = 1; // Offset from the absolute corner to prevent clipping
+        const lightHeight = roomSize - lightOffset;
+        const cornerCoord = (roomSize / 2) - lightOffset;
+        const lightIntensity = 200; // Using physically correct lighting scale
+
+        const lightPositions = [
+            [cornerCoord, lightHeight, cornerCoord],
+            [-cornerCoord, lightHeight, cornerCoord],
+            [cornerCoord, lightHeight, -cornerCoord],
+            [-cornerCoord, lightHeight, -cornerCoord]
+        ];
+
+        lightPositions.forEach(pos => {
+            const pointLight = new THREE.PointLight(0xfff0dd, lightIntensity, 50);
+            pointLight.position.set(pos[0], pos[1], pos[2]);
+            pointLight.castShadow = true;
+            pointLight.shadow.mapSize.width = 1024;
+            pointLight.shadow.mapSize.height = 1024;
+            scene.add(pointLight);
+        });
+
+        // Add faint ambient light so shadows aren't pitch black
+        scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+
+        // --- 4. The Podium ---
+        const podiumGeometry = new THREE.CylinderGeometry(1.5, 1.5, 1, 32);
+        const podiumMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5 });
+        const podium = new THREE.Mesh(podiumGeometry, podiumMaterial);
+        podium.position.set(0, 0.5, 0);
+        podium.castShadow = true;
+        podium.receiveShadow = true;
+        scene.add(podium);
+
+        // --- 5. The Painting (Back Wall) ---
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load('painting.jpg', (texture) => {
+            // Assume a general aspect ratio; you can adjust width/height based on your specific image
+            const paintingGeometry = new THREE.PlaneGeometry(4, 3);
+            const paintingMaterial = new THREE.MeshStandardMaterial({ map: texture });
+            const painting = new THREE.Mesh(paintingGeometry, paintingMaterial);
+            
+            // Place it on the back wall (negative Z)
+            painting.position.set(0, 4, -(roomSize / 2) + 0.05);
+            scene.add(painting);
+        });
+
+        // --- 6. The Car (GLTF Model) ---
+        let carModel;
+        const gltfLoader = new GLTFLoader();
+        gltfLoader.load('car.glb', (gltf) => {
+            carModel = gltf.scene;
+            
+            // Ensure all meshes in the car cast/receive shadows
+            carModel.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                }
+            });
+
+            // Scale and position adjustment (tweak if your model is too large/small)
+            carModel.scale.set(1, 1, 1); 
+            scene.add(carModel);
+        }, undefined, (error) => {
+            console.error("Make sure 'car.glb' is in the same folder and served via local server.", error);
+        });
+
+        // --- 7. Controls (WASD + Click & Drag) ---
+        const keys = { w: false, a: false, s: false, d: false };
+        let isDragging = false;
+
+        document.addEventListener('keydown', (e) => {
+            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true;
+        });
+        document.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false;
+        });
+
+        document.addEventListener('mousedown', () => isDragging = true);
+        document.addEventListener('mouseup', () => isDragging = false);
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                // Adjust viewing direction based on mouse movement
+                const lookSpeed = 0.002;
+                camera.rotation.y -= (e.movementX || e.mozMovementX || e.webkitMovementX || 0) * lookSpeed;
+                camera.rotation.x -= (e.movementY || e.mozMovementY || e.webkitMovementY || 0) * lookSpeed;
+                
+                // Clamp looking up and down to prevent camera flipping
+                camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+            }
+        });
+
+        // Movement logic variables
+        const moveSpeed = 0.1;
+        const direction = new THREE.Vector3();
+        const right = new THREE.Vector3();
+
+        // --- 8. Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            // Animate floating and rotating car
+            if (carModel) {
+                carModel.rotation.y += 0.01; // Rotate slowly
+                // Float up and down using a sine wave, centered slightly above the podium
+                carModel.position.y = 1.5 + Math.sin(time * 2) * 0.2; 
+            }
+
+            // Handle WASD Movement relative to camera direction
+            camera.getWorldDirection(direction);
+            direction.y = 0; // Keep movement locked to the XZ plane (no flying)
+            direction.normalize();
+            
+            // Calculate the right vector by crossing global up (0,1,0) with forward direction
+            right.crossVectors(camera.up, direction).normalize();
+
+            if (keys['w']) camera.position.addScaledVector(direction, moveSpeed);
+            if (keys['s']) camera.position.addScaledVector(direction, -moveSpeed);
+            if (keys['a']) camera.position.addScaledVector(right, moveSpeed);
+            if (keys['d']) camera.position.addScaledVector(right, -moveSpeed);
+
+            // Keep camera inside the room bounds
+            const bound = (roomSize / 2) - 0.5;
+            camera.position.x = Math.max(-bound, Math.min(bound, camera.position.x));
+            camera.position.z = Math.max(-bound, Math.min(bound, camera.position.z));
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
