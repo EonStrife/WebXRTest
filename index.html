@@ -1,212 +1,968 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Museum Scene</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
-        canvas { display: block; }
-        #instructions {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-family: sans-serif;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
-            pointer-events: none;
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Grand Horizon Hotel — Virtual Expo</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    width: 100%; height: 100%;
+    background: #05060a;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  #app-canvas { display: block; width: 100%; height: 100%; outline: none; }
+
+  #loading-screen {
+    position: fixed; inset: 0; z-index: 100;
+    background: radial-gradient(circle at center, #0b1424 0%, #04060a 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #7fe7ff; transition: opacity 0.6s ease;
+  }
+  #loading-screen h1 {
+    font-weight: 300; letter-spacing: 3px; font-size: 1.4em; margin-bottom: 24px;
+    text-shadow: 0 0 12px #38d6ff;
+  }
+  #loading-bar-outer {
+    width: 280px; height: 6px; border: 1px solid #3fd2ff88;
+    border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.05);
+  }
+  #loading-bar-inner {
+    width: 0%; height: 100%;
+    background: linear-gradient(90deg, #1fb6ff, #7fe7ff);
+    box-shadow: 0 0 10px #7fe7ff;
+    transition: width 0.2s ease;
+  }
+  #loading-pct { margin-top: 10px; font-size: 0.85em; opacity: 0.8; letter-spacing: 1px; }
+
+  #fade-overlay {
+    position: fixed; inset: 0; z-index: 60;
+    background: #000; opacity: 0; pointer-events: none;
+    transition: opacity 0.5s ease;
+  }
+  #fade-overlay.active { opacity: 1; }
+
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; width: 8px; height: 8px;
+    margin: -4px 0 0 -4px; border-radius: 50%;
+    border: 1px solid rgba(127, 231, 255, 0.85);
+    box-shadow: 0 0 6px rgba(127,231,255,0.6);
+    pointer-events: none; z-index: 40;
+  }
+
+  #hint {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    color: #cfeeff; background: rgba(6, 14, 24, 0.55); border: 1px solid rgba(127,231,255,0.35);
+    padding: 8px 16px; border-radius: 20px; font-size: 0.8em; letter-spacing: 0.5px;
+    z-index: 40; backdrop-filter: blur(3px); text-align: center; max-width: 88vw;
+    box-shadow: 0 0 14px rgba(0,0,0,0.4);
+  }
+
+  #joystick-zone {
+    position: fixed; left: 26px; bottom: 26px; width: 120px; height: 120px;
+    border-radius: 50%; border: 1px solid rgba(127,231,255,0.4);
+    background: rgba(127,231,255,0.06); z-index: 50; display: none;
+    box-shadow: 0 0 12px rgba(127,231,255,0.15) inset;
+  }
+  #joystick-nub {
+    position: absolute; width: 52px; height: 52px; border-radius: 50%;
+    left: 34px; top: 34px;
+    background: radial-gradient(circle at 35% 35%, #bff3ff, #23c7ff 60%, #0aa0e0);
+    box-shadow: 0 0 14px rgba(127,231,255,0.7);
+  }
+
+  #brand {
+    position: fixed; top: 14px; left: 18px; z-index: 40; color: #9fe7ffcc;
+    font-size: 0.78em; letter-spacing: 2px; text-transform: uppercase;
+    text-shadow: 0 0 8px rgba(0,0,0,0.8);
+    pointer-events: none;
+  }
+</style>
 </head>
 <body>
-    <div id="instructions">
-        <strong>Controls:</strong><br>
-        - <b>W, A, S, D</b> to move.<br>
-        - <b>Click & Drag</b> to look around.
-    </div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
+<div id="loading-screen">
+  <h1>GRAND HORIZON HOTEL</h1>
+  <div id="loading-bar-outer"><div id="loading-bar-inner"></div></div>
+  <div id="loading-pct">Loading experience… 0%</div>
+</div>
+
+<div id="fade-overlay"></div>
+<div id="crosshair"></div>
+<div id="brand">Grand Horizon &middot; Virtual Expo</div>
+<div id="hint">Drag to look around &middot; WASD / joystick to walk &middot; Tap / click to select</div>
+
+<div id="joystick-zone"><div id="joystick-nub"></div></div>
+
+<canvas id="app-canvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ============================================================
+     GLOBAL STATE
+  ============================================================ */
+  var canvas = document.getElementById('app-canvas');
+  var renderer, camera, raycaster;
+  var clock = new THREE.Clock();
+
+  var sceneExpo, sceneRoom;
+  var activeScene = 'expo'; // 'expo' | 'room'
+
+  var isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+  // First-person look state
+  var yaw = 0, pitch = 0;
+  var lookTouchId = null, lastLookX = 0, lastLookY = 0;
+  var mouseLookActive = false;
+
+  // Movement state
+  var keys = { forward: false, back: false, left: false, right: false };
+  var joyVec = { x: 0, y: 0 }; // x=strafe, y=forward
+  var joyTouchId = null;
+  var joyCenter = { x: 0, y: 0 };
+  var moveEnabled = true;
+
+  // Selection (click vs drag distinction)
+  var pointerDownPos = null;
+  var pointerDownTime = 0;
+  var DRAG_THRESHOLD = 8; // px
+  var TAP_TIME_LIMIT = 500; // ms
+
+  // Room bounds (Scene 1)
+  var ROOM_HALF = 9.3;
+  var PODIUM_RADIUS = 2.1;
+  var EYE_HEIGHT = 1.65;
+
+  var selectable = []; // objects clickable in current scene
+  var hotelModelGroup = null;
+  var exitButtonMesh = null;
+
+  var loadingManager = new THREE.LoadingManager();
+
+  /* ============================================================
+     RENDERER / CAMERA SETUP
+  ============================================================ */
+  renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.xr.enabled = true;
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 1000);
+  camera.position.set(0, EYE_HEIGHT, 6);
+
+  raycaster = new THREE.Raycaster();
+
+  // Add a minimal WebXR entry button (works alongside the flat-screen controls).
+  // Implemented inline instead of relying on the external VRButton.js addon,
+  // since that legacy non-module path is no longer reliably served by CDNs.
+  function createVRButton(renderer) {
+    var button = document.createElement('button');
+    button.id = 'VRButton';
+    Object.assign(button.style, {
+      position: 'fixed', bottom: '20px', right: '20px', zIndex: '45',
+      padding: '10px 18px', border: '1px solid rgba(127,231,255,0.6)',
+      borderRadius: '6px', background: 'rgba(6,14,24,0.6)', color: '#cfeeff',
+      font: '13px sans-serif', letterSpacing: '1px', cursor: 'pointer',
+      display: 'none'
+    });
+
+    function showEnterVR() {
+      button.style.display = 'block';
+      button.textContent = 'ENTER VR';
+      button.onclick = function () {
+        var sessionInit = { optionalFeatures: ['local-floor', 'bounded-floor'] };
+        navigator.xr.requestSession('immersive-vr', sessionInit).then(function (session) {
+          session.addEventListener('end', onSessionEnded);
+          renderer.xr.setSession(session);
+          button.textContent = 'EXIT VR';
+          button.onclick = function () { session.end(); };
+        });
+      };
+    }
+    function onSessionEnded() {
+      button.textContent = 'ENTER VR';
+      showEnterVR();
+    }
+    function showNotSupported() {
+      button.style.display = 'block';
+      button.textContent = 'VR NOT SUPPORTED';
+      button.disabled = true;
+      button.style.opacity = '0.5';
+      button.style.cursor = 'default';
+    }
+
+    if ('xr' in navigator) {
+      navigator.xr.isSessionSupported('immersive-vr').then(function (supported) {
+        if (supported) showEnterVR(); else showNotSupported();
+      }).catch(showNotSupported);
+    } else {
+      button.style.display = 'none'; // no WebXR API at all (e.g. non-HTTPS) — stay hidden
+    }
+    return button;
+  }
+  try {
+    document.body.appendChild(createVRButton(renderer));
+  } catch (e) { /* VR not supported, ignore */ }
+
+  window.addEventListener('resize', onResize);
+  function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  /* ============================================================
+     HOLOGRAPHIC SIGNBOARD HELPER
+  ============================================================ */
+  function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+    var words = text.split(' ');
+    var line = '';
+    var lines = [];
+    for (var n = 0; n < words.length; n++) {
+      var testLine = line + words[n] + ' ';
+      var metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && n > 0) {
+        lines.push(line);
+        line = words[n] + ' ';
+      } else {
+        line = testLine;
+      }
+    }
+    lines.push(line);
+    var startY = y - ((lines.length - 1) * lineHeight) / 2;
+    for (var i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i].trim(), x, startY + i * lineHeight);
+    }
+  }
+
+  function createHoloSign(text, opts) {
+    opts = opts || {};
+    var w = opts.width || 2.6;
+    var h = opts.height || 1.1;
+    var canvasW = 640, canvasH = Math.round(640 * (h / w));
+    var c = document.createElement('canvas');
+    c.width = canvasW; c.height = canvasH;
+    var ctx = c.getContext('2d');
+
+    // Panel background
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    var bgAlpha1 = (typeof opts.bgAlpha1 === 'number') ? opts.bgAlpha1 : 0.35;
+    var bgAlpha2 = (typeof opts.bgAlpha2 === 'number') ? opts.bgAlpha2 : 0.15;
+    var grad = ctx.createLinearGradient(0, 0, 0, canvasH);
+    grad.addColorStop(0, 'rgba(20,60,90,' + bgAlpha1 + ')');
+    grad.addColorStop(1, 'rgba(10,30,50,' + bgAlpha2 + ')');
+    ctx.fillStyle = grad;
+    roundRect(ctx, 8, 8, canvasW - 16, canvasH - 16, 18);
+    ctx.fill();
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(120,230,255,0.85)';
+    roundRect(ctx, 8, 8, canvasW - 16, canvasH - 16, 18);
+    ctx.stroke();
+
+    // corner ticks
+    ctx.strokeStyle = 'rgba(190,250,255,0.95)';
+    ctx.lineWidth = 4;
+    var m = 18, cl = 26;
+    ctx.beginPath();
+    ctx.moveTo(m, m + cl); ctx.lineTo(m, m); ctx.lineTo(m + cl, m);
+    ctx.moveTo(canvasW - m - cl, m); ctx.lineTo(canvasW - m, m); ctx.lineTo(canvasW - m, m + cl);
+    ctx.moveTo(m, canvasH - m - cl); ctx.lineTo(m, canvasH - m); ctx.lineTo(m + cl, canvasH - m);
+    ctx.moveTo(canvasW - m - cl, canvasH - m); ctx.lineTo(canvasW - m, canvasH - m); ctx.lineTo(canvasW - m, canvasH - m - cl);
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = '#eafcff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#7fe7ff';
+    ctx.shadowBlur = 18;
+    var fontSize = opts.fontSize || 30;
+    ctx.font = '600 ' + fontSize + 'px Segoe UI, Arial, sans-serif';
+    wrapCanvasText(ctx, text, canvasW / 2, canvasH / 2, canvasW - 90, fontSize * 1.3);
+
+    var tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+
+    var geo = new THREE.PlaneGeometry(w, h);
+    var mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, side: THREE.DoubleSide,
+      depthWrite: false, blending: opts.blending || THREE.AdditiveBlending
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.isHolo = true;
+    mesh.userData.baseY = 0;
+    mesh.userData.bobPhase = Math.random() * Math.PI * 2;
+    mesh.renderOrder = 5;
+    return mesh;
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  var holoSigns = []; // for animation + billboard
+
+  function addHoloSign(scene, text, position, opts) {
+    var sign = createHoloSign(text, opts);
+    sign.position.copy(position);
+    sign.userData.baseY = position.y;
+    if (opts && typeof opts.fixedRotationY === 'number') {
+      sign.userData.fixedRotationY = opts.fixedRotationY;
+      sign.rotation.y = opts.fixedRotationY;
+    }
+    scene.add(sign);
+    holoSigns.push(sign);
+    return sign;
+  }
+
+  /* ============================================================
+     SCENE 1: EXPO ROOM
+  ============================================================ */
+  sceneExpo = new THREE.Scene();
+  sceneExpo.background = new THREE.Color(0x05070c);
+  sceneExpo.fog = new THREE.Fog(0x05070c, 14, 30);
+
+  var expoSelectables = [];
+  function selectableRegister(obj, scene) {
+    if (scene === sceneExpo) expoSelectables.push(obj);
+  }
+
+  (function buildExpoRoom() {
+    var ROOM_SIZE = 20;
+    var ROOM_HEIGHT = 8;
+
+    // Ambient fill
+    var ambient = new THREE.AmbientLight(0x445566, 0.55);
+    sceneExpo.add(ambient);
+
+    // Floor
+    var floorMat = new THREE.MeshStandardMaterial({ color: 0x1b1e26, roughness: 0.55, metalness: 0.25 });
+    var floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE), floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    sceneExpo.add(floor);
+
+    // Ceiling
+    var ceilMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.9 });
+    var ceiling = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE), ceilMat);
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.position.y = ROOM_HEIGHT;
+    sceneExpo.add(ceiling);
+
+    // Walls (enclosed cube). Using inward-facing planes.
+    var wallMat = new THREE.MeshStandardMaterial({ color: 0x20232c, roughness: 0.8, metalness: 0.1 });
+    function makeWall(w, h, pos, rotY) {
+      var wall = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
+      wall.position.copy(pos);
+      wall.rotation.y = rotY;
+      wall.receiveShadow = true;
+      sceneExpo.add(wall);
+      return wall;
+    }
+    var half = ROOM_SIZE / 2;
+    makeWall(ROOM_SIZE, ROOM_HEIGHT, new THREE.Vector3(0, ROOM_HEIGHT / 2, -half), 0);            // back wall
+    makeWall(ROOM_SIZE, ROOM_HEIGHT, new THREE.Vector3(0, ROOM_HEIGHT / 2, half), Math.PI);        // front wall
+    makeWall(ROOM_SIZE, ROOM_HEIGHT, new THREE.Vector3(-half, ROOM_HEIGHT / 2, 0), Math.PI / 2);   // left wall
+    makeWall(ROOM_SIZE, ROOM_HEIGHT, new THREE.Vector3(half, ROOM_HEIGHT / 2, 0), -Math.PI / 2);   // right wall
+
+    // Ceiling corner point lights (4) — placed exactly at the four ceiling corners
+    var cornerInset = 0.12; // tiny inset so the fixture mesh doesn't clip through the walls/ceiling
+    var lightPositions = [
+      [-half + cornerInset, ROOM_HEIGHT - cornerInset, -half + cornerInset],
+      [ half - cornerInset, ROOM_HEIGHT - cornerInset, -half + cornerInset],
+      [-half + cornerInset, ROOM_HEIGHT - cornerInset,  half - cornerInset],
+      [ half - cornerInset, ROOM_HEIGHT - cornerInset,  half - cornerInset]
+    ];
+    lightPositions.forEach(function (p, idx) {
+      var pl = new THREE.PointLight(0xfff2dd, 1.1, 26, 2);
+      pl.position.set(p[0], p[1], p[2]);
+      // All four corner lights cast shadows (podium + hotel model onto the floor)
+      pl.castShadow = true;
+      pl.shadow.mapSize.set(512, 512);
+      pl.shadow.camera.near = 0.5;
+      pl.shadow.camera.far = 24;
+      pl.shadow.bias = -0.003;
+      sceneExpo.add(pl);
+
+      // small fixture glow
+      var fixture = new THREE.Mesh(
+        new THREE.SphereGeometry(0.14, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xfff2dd })
+      );
+      fixture.position.copy(pl.position);
+      sceneExpo.add(fixture);
+    });
+
+    // Soft directional fill so model/paintings aren't too dark
+    var fill = new THREE.DirectionalLight(0xbfd9ff, 0.25);
+    fill.position.set(0, 6, 4);
+    sceneExpo.add(fill);
+
+    // ---- Podium ----
+    var podium = new THREE.Group();
+    var podiumBaseMat = new THREE.MeshStandardMaterial({ color: 0x2c2f3a, roughness: 0.35, metalness: 0.6 });
+    var podiumBase = new THREE.Mesh(new THREE.CylinderGeometry(PODIUM_RADIUS, PODIUM_RADIUS * 1.08, 0.9, 48), podiumBaseMat);
+    podiumBase.position.y = 0.45;
+    podiumBase.castShadow = true;
+    podiumBase.receiveShadow = true;
+    podium.add(podiumBase);
+
+    var podiumRingMat = new THREE.MeshStandardMaterial({ color: 0x7fe7ff, emissive: 0x1fb6ff, emissiveIntensity: 0.9, roughness: 0.4 });
+    var podiumRing = new THREE.Mesh(new THREE.TorusGeometry(PODIUM_RADIUS * 0.98, 0.03, 12, 64), podiumRingMat);
+    podiumRing.rotation.x = Math.PI / 2;
+    podiumRing.position.y = 0.9;
+    podium.add(podiumRing);
+
+    var podiumTopMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.25, metalness: 0.8 });
+    var podiumTop = new THREE.Mesh(new THREE.CylinderGeometry(PODIUM_RADIUS * 0.9, PODIUM_RADIUS * 0.9, 0.08, 48), podiumTopMat);
+    podiumTop.position.y = 0.94;
+    podiumTop.castShadow = true;
+    podiumTop.receiveShadow = true;
+    podium.add(podiumTop);
+
+    podium.position.set(0, 0, 0);
+    sceneExpo.add(podium);
+
+    // Spotlight highlighting the podium/model
+    var spot = new THREE.SpotLight(0xffffff, 1.0, 18, Math.PI / 6, 0.4, 1.5);
+    spot.position.set(0, ROOM_HEIGHT - 0.4, 0);
+    spot.target.position.set(0, 1.4, 0);
+    spot.castShadow = false;
+    sceneExpo.add(spot);
+    sceneExpo.add(spot.target);
+
+    // ---- Hotel 3D model (hovering + rotating above podium) ----
+    hotelModelGroup = new THREE.Group();
+    hotelModelGroup.position.set(0, 1.9, 0);
+    sceneExpo.add(hotelModelGroup);
+
+    var gltfLoader = new THREE.GLTFLoader(loadingManager);
+    gltfLoader.load('./hotel.glb', function (gltf) {
+      var model = gltf.scene;
+      model.traverse(function (node) {
+        if (node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = false;
         }
-    </script>
+      });
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+      // Normalize scale/position so the model fits nicely above the podium
+      var box = new THREE.Box3().setFromObject(model);
+      var size = new THREE.Vector3();
+      box.getSize(size);
+      var maxDim = Math.max(size.x, size.y, size.z) || 1;
+      var targetSize = 2.2;
+      var scale = targetSize / maxDim;
+      model.scale.setScalar(scale);
 
-        // --- 1. Scene Setup ---
-        const scene = new THREE.Scene();
-        
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 1.6, 5); // Average eye height
-        camera.rotation.order = 'YXZ'; // Important for proper FPS rotation
+      // Re-center after scaling
+      box.setFromObject(model);
+      var center = new THREE.Vector3();
+      box.getCenter(center);
+      model.position.sub(center);
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
-        document.body.appendChild(renderer.domElement);
+      hotelModelGroup.add(model);
+    }, undefined, function (err) {
+      console.error('Failed to load hotel.glb', err);
+      // Fallback placeholder so the scene still works if the model is missing
+      var placeholder = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.9, 0),
+        new THREE.MeshStandardMaterial({ color: 0x7fe7ff, emissive: 0x1fb6ff, emissiveIntensity: 0.4, metalness: 0.4, roughness: 0.3 })
+      );
+      placeholder.castShadow = true;
+      hotelModelGroup.add(placeholder);
+    });
 
-        // --- 2. The Room (Cube with 6 bright walls) ---
-        const roomSize = 20;
-        const roomGeometry = new THREE.BoxGeometry(roomSize, roomSize, roomSize);
-        const roomMaterial = new THREE.MeshStandardMaterial({ 
-            color: 0xffffff, 
-            side: THREE.BackSide, // Render inside of the cube
-            roughness: 0.8
-        });
-        const room = new THREE.Mesh(roomGeometry, roomMaterial);
-        room.position.y = roomSize / 2; // Floor at y=0
-        room.receiveShadow = true;
-        scene.add(room);
+    hotelModelGroup.userData.clickable = true;
+    hotelModelGroup.userData.onSelect = function () { transitionToRoom(); };
+    selectableRegister(hotelModelGroup, sceneExpo);
 
-        // --- 3. Lighting (4 Point Lights from ceiling corners) ---
-        const lightOffset = 1; // Offset from the absolute corner to prevent clipping
-        const lightHeight = roomSize - lightOffset;
-        const cornerCoord = (roomSize / 2) - lightOffset;
-        const lightIntensity = 200; // Using physically correct lighting scale
+    // Holographic instruction sign above the model
+    addHoloSign(sceneExpo, 'Click the model to preview the room', new THREE.Vector3(0, 3.9, 0), { width: 3.2, height: 0.9, fontSize: 30 });
 
-        const lightPositions = [
-            [cornerCoord, lightHeight, cornerCoord],
-            [-cornerCoord, lightHeight, cornerCoord],
-            [cornerCoord, lightHeight, -cornerCoord],
-            [-cornerCoord, lightHeight, -cornerCoord]
-        ];
+    // ---- Paintings ----
+    var texLoader = new THREE.TextureLoader(loadingManager);
 
-        lightPositions.forEach(pos => {
-            const pointLight = new THREE.PointLight(0xfff0dd, lightIntensity, 50);
-            pointLight.position.set(pos[0], pos[1], pos[2]);
-            pointLight.castShadow = true;
-            pointLight.shadow.mapSize.width = 1024;
-            pointLight.shadow.mapSize.height = 1024;
-            scene.add(pointLight);
-        });
+    function makePainting(url, position, rotY, w, hh) {
+      var group = new THREE.Group();
+      var frameMat = new THREE.MeshStandardMaterial({ color: 0x2a2117, roughness: 0.6, metalness: 0.3 });
+      var frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.2, hh + 0.2, 0.08), frameMat);
+      frame.castShadow = true;
+      group.add(frame);
 
-        // Add faint ambient light so shadows aren't pitch black
-        scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+      var canvasMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+      var canvasMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, hh), canvasMat);
+      canvasMesh.position.z = 0.045;
+      group.add(canvasMesh);
 
-        // --- 4. The Podium ---
-        const podiumGeometry = new THREE.CylinderGeometry(1.5, 1.5, 1, 32);
-        const podiumMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5 });
-        const podium = new THREE.Mesh(podiumGeometry, podiumMaterial);
-        podium.position.set(0, 0.5, 0);
-        podium.castShadow = true;
-        podium.receiveShadow = true;
-        scene.add(podium);
+      texLoader.load(url, function (tex) {
+        tex.encoding = THREE.sRGBEncoding;
+        canvasMat.map = tex;
+        canvasMat.color.set(0xffffff);
+        canvasMat.needsUpdate = true;
+      }, undefined, function () {
+        canvasMat.color.set(0x556070); // fallback tint if image missing
+      });
 
-        // --- 5. The Painting (Back Wall) ---
-        const textureLoader = new THREE.TextureLoader();
-        textureLoader.load('painting.jpg', (texture) => {
-            // Assume a general aspect ratio; you can adjust width/height based on your specific image
-            const paintingGeometry = new THREE.PlaneGeometry(4, 3);
-            const paintingMaterial = new THREE.MeshStandardMaterial({ map: texture });
-            const painting = new THREE.Mesh(paintingGeometry, paintingMaterial);
-            
-            // Place it on the back wall (negative Z)
-            painting.position.set(0, 4, -(roomSize / 2) + 0.05);
-            scene.add(painting);
-        });
+      group.position.copy(position);
+      group.rotation.y = rotY;
+      sceneExpo.add(group);
+      return group;
+    }
 
-        // --- 6. The Car (GLTF Model) ---
-        let carModel;
-        const gltfLoader = new GLTFLoader();
-        gltfLoader.load('car.glb', (gltf) => {
-            carModel = gltf.scene;
-            
-            // Ensure all meshes in the car cast/receive shadows
-            carModel.traverse((node) => {
-                if (node.isMesh) {
-                    node.castShadow = true;
-                    node.receiveShadow = true;
-                }
-            });
+    var wallOffset = half - 0.06;
+    var paintingY = 3.0;
+    var pW = 5.2, pH = 3.4; // 2x the original painting size
+    var signW = 4.6, signH = 2.0; // 2x the original signboard size
+    var signGap = 0.35; // gap between top of painting and bottom of signboard
+    var signY = paintingY + pH / 2 + signGap + signH / 2;
 
-            // Scale and position adjustment (tweak if your model is too large/small)
-            carModel.scale.set(1, 1, 1); 
-            scene.add(carModel);
-        }, undefined, (error) => {
-            console.error("Make sure 'car.glb' is in the same folder and served via local server.", error);
-        });
+    // Painting 1: left wall, centered on the wall (z = 0)
+    makePainting('./painting1.png', new THREE.Vector3(-wallOffset, paintingY, 0), Math.PI / 2, pW, pH);
+    addHoloSign(sceneExpo,
+      "The Construction — Witness the vision that shaped Grand Horizon, from foundation to façade.",
+      new THREE.Vector3(-wallOffset, signY, 0), { width: signW, height: signH, fontSize: 24, fixedRotationY: Math.PI / 2 });
 
-        // --- 7. Controls (WASD + Click & Drag) ---
-        const keys = { w: false, a: false, s: false, d: false };
-        let isDragging = false;
+    // Painting 2: back wall, centered on the wall (x = 0)
+    makePainting('./painting2.png', new THREE.Vector3(0, paintingY, -half + 0.06), 0, pW, pH);
+    addHoloSign(sceneExpo,
+      "The Grand Opening — Relive the ceremony that welcomed the world to Grand Horizon Hotel.",
+      new THREE.Vector3(0, signY, -half + 0.06), { width: signW, height: signH, fontSize: 24, fixedRotationY: 0 });
 
-        document.addEventListener('keydown', (e) => {
-            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true;
-        });
-        document.addEventListener('keyup', (e) => {
-            if (keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false;
-        });
+    // Painting 3: right wall, centered on the wall (z = 0)
+    makePainting('./painting3.png', new THREE.Vector3(wallOffset, paintingY, 0), -Math.PI / 2, pW, pH);
+    addHoloSign(sceneExpo,
+      "The Rooms — Discover the comfort and elegance awaiting every guest of Grand Horizon.",
+      new THREE.Vector3(wallOffset, signY, 0), { width: signW, height: signH, fontSize: 24, fixedRotationY: -Math.PI / 2 });
 
-        document.addEventListener('mousedown', () => isDragging = true);
-        document.addEventListener('mouseup', () => isDragging = false);
-        document.addEventListener('mousemove', (e) => {
-            if (isDragging) {
-                // Adjust viewing direction based on mouse movement
-                const lookSpeed = 0.002;
-                camera.rotation.y -= (e.movementX || e.mozMovementX || e.webkitMovementX || 0) * lookSpeed;
-                camera.rotation.x -= (e.movementY || e.mozMovementY || e.webkitMovementY || 0) * lookSpeed;
-                
-                // Clamp looking up and down to prevent camera flipping
-                camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
-            }
-        });
+  })();
 
-        // Movement logic variables
-        const moveSpeed = 0.1;
-        const direction = new THREE.Vector3();
-        const right = new THREE.Vector3();
+  /* ============================================================
+     SCENE 2: PHOTOSPHERE ROOM
+  ============================================================ */
+  sceneRoom = new THREE.Scene();
+  var roomSelectables = [];
 
-        // --- 8. Animation Loop ---
-        const clock = new THREE.Clock();
+  (function buildRoomScene() {
+    var texLoader = new THREE.TextureLoader(loadingManager);
+    var sphereGeo = new THREE.SphereGeometry(60, 60, 40);
+    sphereGeo.scale(-1, 1, 1); // invert so texture is visible from inside
 
-        function animate() {
-            requestAnimationFrame(animate);
-            const time = clock.getElapsedTime();
+    var sphereMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+    var sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+    sceneRoom.add(sphereMesh);
 
-            // Animate floating and rotating car
-            if (carModel) {
-                carModel.rotation.y += 0.01; // Rotate slowly
-                // Float up and down using a sine wave, centered slightly above the podium
-                carModel.position.y = 1.5 + Math.sin(time * 2) * 0.2; 
-            }
+    texLoader.load('./panoramic.png', function (tex) {
+      tex.encoding = THREE.sRGBEncoding;
+      tex.minFilter = THREE.LinearFilter;
+      sphereMat.map = tex;
+      sphereMat.color.set(0xffffff);
+      sphereMat.needsUpdate = true;
+    });
 
-            // Handle WASD Movement relative to camera direction
-            camera.getWorldDirection(direction);
-            direction.y = 0; // Keep movement locked to the XZ plane (no flying)
-            direction.normalize();
-            
-            // Calculate the right vector by crossing global up (0,1,0) with forward direction
-            right.crossVectors(camera.up, direction).normalize();
+    var descSign = createHoloSign(
+      "Step inside the Deluxe Suite — where soft ambient light, plush furnishings, and panoramic city views come together for an unforgettable stay.",
+      { width: 3.6, height: 1.3, fontSize: 26, bgAlpha1: 0.92, bgAlpha2: 0.8, blending: THREE.NormalBlending }
+    );
+    // Placed 90° to the left (counterclockwise) of the original front-facing spot
+    descSign.position.set(-4.5, 1.5, 0);
+    descSign.rotation.y = Math.PI / 2;
+    descSign.userData.fixedRotationY = Math.PI / 2;
+    descSign.userData.baseY = 1.5;
+    descSign.userData.baseOpacity = 0.98;
+    descSign.userData.opacityAmplitude = 0.02;
+    sceneRoom.add(descSign);
+    holoSigns.push(descSign);
 
-            if (keys['w']) camera.position.addScaledVector(direction, moveSpeed);
-            if (keys['s']) camera.position.addScaledVector(direction, -moveSpeed);
-            if (keys['a']) camera.position.addScaledVector(right, moveSpeed);
-            if (keys['d']) camera.position.addScaledVector(right, -moveSpeed);
+    // Exit button sits directly above the description sign, parallel to it
+    exitButtonMesh = createHoloSign('Click to exit', { width: 1.8, height: 0.55, fontSize: 34, bgAlpha1: 0.92, bgAlpha2: 0.8, blending: THREE.NormalBlending });
+    exitButtonMesh.position.set(-4.5, 2.75, 0);
+    exitButtonMesh.rotation.y = Math.PI / 2;
+    exitButtonMesh.userData.fixedRotationY = Math.PI / 2;
+    exitButtonMesh.userData.baseY = 2.75;
+    exitButtonMesh.userData.baseOpacity = 0.98;
+    exitButtonMesh.userData.opacityAmplitude = 0.02;
+    exitButtonMesh.userData.clickable = true;
+    exitButtonMesh.userData.onSelect = function () { transitionToExpo(); };
+    sceneRoom.add(exitButtonMesh);
+    holoSigns.push(exitButtonMesh);
+    roomSelectables.push(exitButtonMesh);
 
-            // Keep camera inside the room bounds
-            const bound = (roomSize / 2) - 0.5;
-            camera.position.x = Math.max(-bound, Math.min(bound, camera.position.x));
-            camera.position.z = Math.max(-bound, Math.min(bound, camera.position.z));
+    var ambient2 = new THREE.AmbientLight(0xffffff, 0.9);
+    sceneRoom.add(ambient2);
+  })();
 
-            renderer.render(scene, camera);
+  /* ============================================================
+     LOADING MANAGER UI
+  ============================================================ */
+  var loadingScreen = document.getElementById('loading-screen');
+  var loadingBar = document.getElementById('loading-bar-inner');
+  var loadingPct = document.getElementById('loading-pct');
+
+  loadingManager.onProgress = function (url, loaded, total) {
+    var pct = Math.round((loaded / total) * 100);
+    loadingBar.style.width = pct + '%';
+    loadingPct.textContent = 'Loading experience… ' + pct + '%';
+  };
+  loadingManager.onLoad = function () {
+    loadingBar.style.width = '100%';
+    loadingPct.textContent = 'Ready';
+    setTimeout(function () {
+      loadingScreen.style.opacity = '0';
+      setTimeout(function () { loadingScreen.style.display = 'none'; }, 650);
+    }, 300);
+  };
+  // Fallback: hide loading screen even if some assets error out
+  loadingManager.onError = function (url) {
+    console.warn('Error loading asset:', url);
+  };
+  setTimeout(function () {
+    if (loadingScreen.style.display !== 'none') {
+      loadingScreen.style.opacity = '0';
+      setTimeout(function () { loadingScreen.style.display = 'none'; }, 650);
+    }
+  }, 12000);
+
+  /* ============================================================
+     SCENE TRANSITIONS
+  ============================================================ */
+  var fadeOverlay = document.getElementById('fade-overlay');
+  var joystickZone = document.getElementById('joystick-zone');
+  var hintEl = document.getElementById('hint');
+  var transitioning = false;
+
+  function transitionToRoom() {
+    if (transitioning || activeScene !== 'expo') return;
+    transitioning = true;
+    fadeOverlay.classList.add('active');
+    setTimeout(function () {
+      activeScene = 'room';
+      moveEnabled = false;
+      yaw = 0; pitch = 0;
+      camera.position.set(0, 1.5, 0);
+      hintEl.textContent = 'Look around \u2014 tap EXIT to return';
+      updateJoystickVisibility();
+      fadeOverlay.classList.remove('active');
+      transitioning = false;
+    }, 550);
+  }
+
+  function transitionToExpo() {
+    if (transitioning || activeScene !== 'room') return;
+    transitioning = true;
+    fadeOverlay.classList.add('active');
+    setTimeout(function () {
+      activeScene = 'expo';
+      moveEnabled = true;
+      yaw = 0; pitch = 0;
+      camera.position.set(0, EYE_HEIGHT, 6);
+      hintEl.textContent = 'Drag to look around \u00b7 WASD / joystick to walk \u00b7 Tap / click to select';
+      updateJoystickVisibility();
+      fadeOverlay.classList.remove('active');
+      transitioning = false;
+    }, 550);
+  }
+
+  function updateJoystickVisibility() {
+    joystickZone.style.display = (isTouchDevice && moveEnabled) ? 'block' : 'none';
+  }
+  updateJoystickVisibility();
+
+  /* ============================================================
+     INPUT: KEYBOARD (desktop movement)
+  ============================================================ */
+  window.addEventListener('keydown', function (e) {
+    switch (e.code) {
+      case 'KeyW': case 'ArrowUp': keys.forward = true; break;
+      case 'KeyS': case 'ArrowDown': keys.back = true; break;
+      case 'KeyA': case 'ArrowLeft': keys.left = true; break;
+      case 'KeyD': case 'ArrowRight': keys.right = true; break;
+    }
+  });
+  window.addEventListener('keyup', function (e) {
+    switch (e.code) {
+      case 'KeyW': case 'ArrowUp': keys.forward = false; break;
+      case 'KeyS': case 'ArrowDown': keys.back = false; break;
+      case 'KeyA': case 'ArrowLeft': keys.left = false; break;
+      case 'KeyD': case 'ArrowRight': keys.right = false; break;
+    }
+  });
+
+  /* ============================================================
+     INPUT: MOUSE (desktop look + click-select)
+  ============================================================ */
+  canvas.addEventListener('mousedown', function (e) {
+    mouseLookActive = true;
+    lastLookX = e.clientX; lastLookY = e.clientY;
+    pointerDownPos = { x: e.clientX, y: e.clientY };
+    pointerDownTime = performance.now();
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!mouseLookActive) return;
+    var dx = e.clientX - lastLookX;
+    var dy = e.clientY - lastLookY;
+    lastLookX = e.clientX; lastLookY = e.clientY;
+    applyLookDelta(dx, dy);
+  });
+  window.addEventListener('mouseup', function (e) {
+    if (mouseLookActive && pointerDownPos) {
+      var dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+      var dt = performance.now() - pointerDownTime;
+      if (dist < DRAG_THRESHOLD && dt < TAP_TIME_LIMIT) {
+        performSelect(e.clientX, e.clientY);
+      }
+    }
+    mouseLookActive = false;
+    pointerDownPos = null;
+  });
+
+  /* ============================================================
+     INPUT: TOUCH (mobile look + joystick + tap-select)
+  ============================================================ */
+  function pointInZone(x, y, el) {
+    var r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  }
+
+  window.addEventListener('touchstart', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (moveEnabled && joyTouchId === null && pointInZone(t.clientX, t.clientY, joystickZone)) {
+        joyTouchId = t.identifier;
+        var r = joystickZone.getBoundingClientRect();
+        joyCenter.x = r.left + r.width / 2;
+        joyCenter.y = r.top + r.height / 2;
+        updateJoyNub(t.clientX, t.clientY);
+      } else if (lookTouchId === null) {
+        lookTouchId = t.identifier;
+        lastLookX = t.clientX; lastLookY = t.clientY;
+        pointerDownPos = { x: t.clientX, y: t.clientY };
+        pointerDownTime = performance.now();
+      }
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier === joyTouchId) {
+        updateJoyNub(t.clientX, t.clientY);
+      } else if (t.identifier === lookTouchId) {
+        var dx = t.clientX - lastLookX;
+        var dy = t.clientY - lastLookY;
+        lastLookX = t.clientX; lastLookY = t.clientY;
+        applyLookDelta(dx, dy);
+      }
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchend', function (e) {
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      var t = e.changedTouches[i];
+      if (t.identifier === joyTouchId) {
+        joyTouchId = null;
+        joyVec.x = 0; joyVec.y = 0;
+        resetJoyNub();
+      } else if (t.identifier === lookTouchId) {
+        if (pointerDownPos) {
+          var dist = Math.hypot(t.clientX - pointerDownPos.x, t.clientY - pointerDownPos.y);
+          var dt = performance.now() - pointerDownTime;
+          if (dist < DRAG_THRESHOLD && dt < TAP_TIME_LIMIT) {
+            performSelect(t.clientX, t.clientY);
+          }
         }
+        lookTouchId = null;
+        pointerDownPos = null;
+      }
+    }
+  }, { passive: true });
 
-        animate();
+  var joyNub = document.getElementById('joystick-nub');
+  var JOY_RADIUS = 45;
+  function updateJoyNub(x, y) {
+    var dx = x - joyCenter.x;
+    var dy = y - joyCenter.y;
+    var dist = Math.min(Math.hypot(dx, dy), JOY_RADIUS);
+    var angle = Math.atan2(dy, dx);
+    var nx = Math.cos(angle) * dist;
+    var ny = Math.sin(angle) * dist;
+    joyNub.style.left = (34 + nx) + 'px';
+    joyNub.style.top = (34 + ny) + 'px';
+    joyVec.x = nx / JOY_RADIUS;         // strafe
+    joyVec.y = -ny / JOY_RADIUS;        // forward (screen up = forward)
+  }
+  function resetJoyNub() {
+    joyNub.style.left = '34px';
+    joyNub.style.top = '34px';
+  }
 
-        // Handle window resizing
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    </script>
+  /* ============================================================
+     LOOK / SELECT LOGIC
+  ============================================================ */
+  var LOOK_SPEED = 0.0028;
+  function applyLookDelta(dx, dy) {
+    yaw -= dx * LOOK_SPEED;
+    pitch -= dy * LOOK_SPEED;
+    var maxPitch = Math.PI / 2 - 0.05;
+    if (pitch > maxPitch) pitch = maxPitch;
+    if (pitch < -maxPitch) pitch = -maxPitch;
+  }
+
+  function performSelect(clientX, clientY) {
+    var ndc = new THREE.Vector2(
+      (clientX / window.innerWidth) * 2 - 1,
+      -(clientY / window.innerHeight) * 2 + 1
+    );
+    raycaster.setFromCamera(ndc, camera);
+    var pool = activeScene === 'expo' ? expoSelectables : roomSelectables;
+    var hits = raycaster.intersectObjects(pool, true);
+    if (hits.length > 0) {
+      var obj = hits[0].object;
+      while (obj && !obj.userData.onSelect) obj = obj.parent;
+      if (obj && obj.userData.onSelect) obj.userData.onSelect();
+    }
+  }
+
+  /* ============================================================
+     ANIMATION LOOP
+  ============================================================ */
+  var MOVE_SPEED = 3.2; // m/s
+
+  function updateMovement(dt) {
+    if (!moveEnabled) return;
+
+    var forwardInput = 0, strafeInput = 0;
+    if (keys.forward) forwardInput += 1;
+    if (keys.back) forwardInput -= 1;
+    if (keys.right) strafeInput += 1;
+    if (keys.left) strafeInput -= 1;
+
+    forwardInput += joyVec.y;
+    strafeInput += joyVec.x;
+
+    forwardInput = Math.max(-1, Math.min(1, forwardInput));
+    strafeInput = Math.max(-1, Math.min(1, strafeInput));
+
+    if (forwardInput === 0 && strafeInput === 0) return;
+
+    // True forward vector for a camera looking down -Z at yaw=0, and its
+    // corresponding right vector (perpendicular, rotated -90 degrees).
+    var forwardX = -Math.sin(yaw);
+    var forwardZ = -Math.cos(yaw);
+    var rightX = Math.cos(yaw);
+    var rightZ = -Math.sin(yaw);
+
+    var dx = (forwardX * forwardInput + rightX * strafeInput) * MOVE_SPEED * dt;
+    var dz = (forwardZ * forwardInput + rightZ * strafeInput) * MOVE_SPEED * dt;
+
+    var nx = camera.position.x + dx;
+    var nz = camera.position.z + dz;
+
+    // Clamp to room bounds
+    var bound = ROOM_HALF - 0.4;
+    nx = Math.max(-bound, Math.min(bound, nx));
+    nz = Math.max(-bound, Math.min(bound, nz));
+
+    // Avoid walking through the podium
+    var distFromCenter = Math.hypot(nx, nz);
+    if (distFromCenter < PODIUM_RADIUS + 0.5) {
+      var scale = (PODIUM_RADIUS + 0.5) / (distFromCenter || 1);
+      nx *= scale; nz *= scale;
+    }
+
+    camera.position.x = nx;
+    camera.position.z = nz;
+  }
+
+  function updateCameraRotation() {
+    if (renderer.xr.isPresenting) return; // let the headset drive orientation
+    camera.rotation.order = 'YXZ';
+    camera.rotation.set(pitch, yaw, 0);
+  }
+
+  function animateHoloSigns(elapsed) {
+    for (var i = 0; i < holoSigns.length; i++) {
+      var s = holoSigns[i];
+      s.position.y = s.userData.baseY + Math.sin(elapsed * 1.4 + s.userData.bobPhase) * 0.06;
+      // Gentle flicker (each sign can override its base opacity / flicker amount)
+      var baseOpacity = (typeof s.userData.baseOpacity === 'number') ? s.userData.baseOpacity : 0.85;
+      var opacityAmp = (typeof s.userData.opacityAmplitude === 'number') ? s.userData.opacityAmplitude : 0.08;
+      s.material.opacity = baseOpacity + Math.sin(elapsed * 6 + s.userData.bobPhase) * opacityAmp;
+      if (typeof s.userData.fixedRotationY === 'number') {
+        // Held parallel to its wall/reference plane instead of billboarding
+        s.rotation.y = s.userData.fixedRotationY;
+      } else {
+        // Billboard toward camera (yaw only)
+        var dx = camera.position.x - s.position.x;
+        var dz = camera.position.z - s.position.z;
+        s.rotation.y = Math.atan2(dx, dz);
+      }
+    }
+  }
+
+  function animateHotelModel(elapsed) {
+    if (hotelModelGroup) {
+      hotelModelGroup.rotation.y = elapsed * 0.5;
+      hotelModelGroup.position.y = 1.9 + Math.sin(elapsed * 1.1) * 0.08;
+    }
+  }
+
+  // XR controller select support
+  function setupXRController(index) {
+    var controller = renderer.xr.getController(index);
+    controller.addEventListener('select', function () {
+      var tempMatrix = new THREE.Matrix4();
+      tempMatrix.identity().extractRotation(controller.matrixWorld);
+      var origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+      var dir = new THREE.Vector3(0, 0, -1).applyMatrix4(tempMatrix);
+      raycaster.set(origin, dir);
+      var pool = activeScene === 'expo' ? expoSelectables : roomSelectables;
+      var hits = raycaster.intersectObjects(pool, true);
+      if (hits.length > 0) {
+        var obj = hits[0].object;
+        while (obj && !obj.userData.onSelect) obj = obj.parent;
+        if (obj && obj.userData.onSelect) obj.userData.onSelect();
+      }
+    });
+    return controller;
+  }
+  try {
+    var c0 = setupXRController(0);
+    var c1 = setupXRController(1);
+    sceneExpo.add(c0); sceneExpo.add(c1);
+  } catch (e) { /* ignore if unsupported */ }
+
+  renderer.setAnimationLoop(function () {
+    var dt = Math.min(clock.getDelta(), 0.1);
+    var elapsed = clock.getElapsedTime();
+
+    updateMovement(dt);
+    updateCameraRotation();
+    animateHoloSigns(elapsed);
+    animateHotelModel(elapsed);
+
+    var sceneToRender = activeScene === 'expo' ? sceneExpo : sceneRoom;
+    renderer.render(sceneToRender, camera);
+  });
+
+})();
+</script>
 </body>
 </html>
