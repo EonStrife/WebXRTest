@@ -656,6 +656,43 @@
   }, 12000);
 
   /* ============================================================
+     BACKGROUND MUSIC (looping)
+  ============================================================ */
+  var bgm = new Audio('./audio.mp3');
+  bgm.loop = true;
+  bgm.volume = 0.45;
+  bgm.preload = 'auto';
+
+  var bgmStarted = false;
+  function tryStartBGM() {
+    if (bgmStarted) return;
+    var playPromise = bgm.play();
+    if (playPromise && typeof playPromise.then === 'function') {
+      playPromise.then(function () {
+        bgmStarted = true;
+        removeBGMUnlockListeners();
+      }).catch(function () {
+        // Autoplay with sound was blocked — wait for a user gesture instead
+      });
+    } else {
+      bgmStarted = true;
+      removeBGMUnlockListeners();
+    }
+  }
+  function removeBGMUnlockListeners() {
+    window.removeEventListener('pointerdown', tryStartBGM);
+    window.removeEventListener('touchstart', tryStartBGM);
+    window.removeEventListener('keydown', tryStartBGM);
+  }
+  // Most browsers block audio with sound until the user has interacted with
+  // the page, so try immediately and also on the first interaction.
+  tryStartBGM();
+  window.addEventListener('pointerdown', tryStartBGM);
+  window.addEventListener('touchstart', tryStartBGM);
+  window.addEventListener('keydown', tryStartBGM);
+
+
+  /* ============================================================
      SCENE TRANSITIONS
   ============================================================ */
   var fadeOverlay = document.getElementById('fade-overlay');
