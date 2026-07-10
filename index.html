@@ -975,50 +975,83 @@
   ============================================================ */
   var MOVE_SPEED = 3.2; // m/s
 
-  function updateMovement(dt) {
-    if (!moveEnabled) return;
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+  function readXRThumbstickInput() {
+    var forwardInput = 0, strafeInput = 0;
+    var session = renderer.xr.getSession && renderer.xr.getSession();
+    if (session && session.inputSources) {
+      for (var i = 0; i < session.inputSources.length; i++) {
+        var src = session.inputSources[i];
+        var gp = src && src.gamepad;
+        if (!gp || !gp.axes || gp.axes.length < 2) continue;
+        // Most XR controllers (incl. Quest touch controllers) report the
+        // thumbstick on axes[2]/axes[3]; fall back to axes[0]/axes[1].
+        var ax = gp.axes.length >= 4 ? gp.axes[2] : gp.axes[0];
+        var ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1];
+        if (Math.abs(ax) > 0.15) strafeInput += ax;
+        if (Math.abs(ay) > 0.15) forwardInput += -ay; // pushing stick forward = negative Y
+      }
+    }
+    return { forward: clamp(forwardInput, -1, 1), strafe: clamp(strafeInput, -1, 1) };
+  }
+
+  function readFlatInput() {
     var forwardInput = 0, strafeInput = 0;
     if (keys.forward) forwardInput += 1;
     if (keys.back) forwardInput -= 1;
     if (keys.right) strafeInput += 1;
     if (keys.left) strafeInput -= 1;
-
     forwardInput += joyVec.y;
     strafeInput += joyVec.x;
+    return { forward: clamp(forwardInput, -1, 1), strafe: clamp(strafeInput, -1, 1) };
+  }
 
-    forwardInput = Math.max(-1, Math.min(1, forwardInput));
-    strafeInput = Math.max(-1, Math.min(1, strafeInput));
+  function updateMovement(dt) {
+    if (!moveEnabled) return;
 
+    var presenting = renderer.xr.isPresenting;
+    var input = presenting ? readXRThumbstickInput() : readFlatInput();
+    var forwardInput = input.forward, strafeInput = input.strafe;
     if (forwardInput === 0 && strafeInput === 0) return;
+
+    // Movement direction: in VR, use the headset's actual facing direction;
+    // otherwise use the tracked mouse/touch look yaw.
+    var moveYaw = yaw;
+    if (presenting) {
+      camera.getWorldDirection(cameraWorldPos);
+      moveYaw = Math.atan2(-cameraWorldPos.x, -cameraWorldPos.z);
+    }
 
     // True forward vector for a camera looking down -Z at yaw=0, and its
     // corresponding right vector (perpendicular, rotated -90 degrees).
-    var forwardX = -Math.sin(yaw);
-    var forwardZ = -Math.cos(yaw);
-    var rightX = Math.cos(yaw);
-    var rightZ = -Math.sin(yaw);
+    var forwardX = -Math.sin(moveYaw);
+    var forwardZ = -Math.cos(moveYaw);
+    var rightX = Math.cos(moveYaw);
+    var rightZ = -Math.sin(moveYaw);
 
     var dx = (forwardX * forwardInput + rightX * strafeInput) * MOVE_SPEED * dt;
     var dz = (forwardZ * forwardInput + rightZ * strafeInput) * MOVE_SPEED * dt;
 
-    var nx = camera.position.x + dx;
-    var nz = camera.position.z + dz;
+    var nx = playerRig.position.x + dx;
+    var nz = playerRig.position.z + dz;
 
-    // Clamp to room bounds
-    var bound = ROOM_HALF - 0.4;
-    nx = Math.max(-bound, Math.min(bound, nx));
-    nz = Math.max(-bound, Math.min(bound, nz));
+    if (activeScene === 'expo') {
+      // Clamp to room bounds
+      var bound = ROOM_HALF - 0.4;
+      nx = clamp(nx, -bound, bound);
+      nz = clamp(nz, -bound, bound);
 
-    // Avoid walking through the podium
-    var distFromCenter = Math.hypot(nx, nz);
-    if (distFromCenter < PODIUM_RADIUS + 0.5) {
-      var scale = (PODIUM_RADIUS + 0.5) / (distFromCenter || 1);
-      nx *= scale; nz *= scale;
+      // Avoid walking through the podium
+      var distFromCenter = Math.hypot(nx, nz);
+      if (distFromCenter < PODIUM_RADIUS + 0.5) {
+        var scale = (PODIUM_RADIUS + 0.5) / (distFromCenter || 1);
+        nx *= scale; nz *= scale;
+      }
     }
 
-    camera.position.x = nx;
-    camera.position.z = nz;
+    playerRig.position.x = nx;
+    playerRig.position.z = nz;
   }
 
   function updateCameraRotation() {
@@ -1028,6 +1061,7 @@
   }
 
   function animateHoloSigns(elapsed) {
+    camera.getWorldPosition(cameraWorldPos);
     for (var i = 0; i < holoSigns.length; i++) {
       var s = holoSigns[i];
       s.position.y = s.userData.baseY + Math.sin(elapsed * 1.4 + s.userData.bobPhase) * 0.06;
@@ -1040,8 +1074,8 @@
         s.rotation.y = s.userData.fixedRotationY;
       } else {
         // Billboard toward camera (yaw only)
-        var dx = camera.position.x - s.position.x;
-        var dz = camera.position.z - s.position.z;
+        var dx = cameraWorldPos.x - s.position.x;
+        var dz = cameraWorldPos.z - s.position.z;
         s.rotation.y = Math.atan2(dx, dz);
       }
     }
@@ -1054,9 +1088,21 @@
     }
   }
 
-  // XR controller select support
+  // XR controller support: selection (trigger) + a visual aiming ray.
+  // Controllers are parented to playerRig so they translate correctly
+  // when the player uses the thumbstick to walk around.
   function setupXRController(index) {
     var controller = renderer.xr.getController(index);
+
+    var rayGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -5)
+    ]);
+    var rayMat = new THREE.LineBasicMaterial({ color: 0x7fe7ff, transparent: true, opacity: 0.6 });
+    var ray = new THREE.Line(rayGeo, rayMat);
+    ray.name = 'controllerRay';
+    ray.scale.z = 0.4; // short, comfortable aiming ray
+    controller.add(ray);
+
     controller.addEventListener('select', function () {
       var tempMatrix = new THREE.Matrix4();
       tempMatrix.identity().extractRotation(controller.matrixWorld);
@@ -1076,7 +1122,7 @@
   try {
     var c0 = setupXRController(0);
     var c1 = setupXRController(1);
-    sceneExpo.add(c0); sceneExpo.add(c1);
+    playerRig.add(c0); playerRig.add(c1);
   } catch (e) { /* ignore if unsupported */ }
 
   renderer.setAnimationLoop(function () {
